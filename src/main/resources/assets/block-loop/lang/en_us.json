@@ -1,0 +1,14 @@
+{
+  "category.blockloop": "BlockLoop",
+  "module.block-loop": "Block Loop",
+  "block-loop.selected-category": "Selected Category",
+  "block-loop.rotation-speed": "Rotation Speed",
+  "block-loop.rotation-smoothing": "Camera Smoothing",
+  "block-loop.save-walk-stand": "Save Walk + Stand",
+  "block-loop.save-look": "Save Look",
+  "block-loop.toggle-loop": "Start / Stop Loop",
+  "block-loop.name": "Name",
+  "block-loop.saved-points": "Saved Points",
+  "block-loop.wait-time": "Wait time after looking (seconds)",
+  "block-loop.right-click-hold": "Hold Right Click"
+}
