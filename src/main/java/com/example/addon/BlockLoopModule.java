@@ -59,7 +59,6 @@ public class BlockLoopModule extends Module {
     private boolean writingSetting = false;
 
     private double lastX, lastZ, lastPlayerY;
-    private float walkPitch;
     private boolean initialCenterPending;
     private boolean descentFreeze;
     private float descentYaw, descentPitch;
@@ -70,6 +69,10 @@ public class BlockLoopModule extends Module {
     private final SettingGroup[] sgCategories = new SettingGroup[CATEGORY_COUNT];
 
     private final Setting<Boolean> rightClickHold;
+    private final Setting<Boolean> freezeOnDescent;
+    private final Setting<Boolean> freezeWhenTargetLower;
+    private final Setting<Double> descentHoldDistance;
+    private final Setting<Boolean> baritoneFreeLook;
     private final Setting<Integer> selectedCategory;
     private final Setting<Double> rotationSpeed;
     private final Setting<Double> rotationSmoothing;
@@ -96,6 +99,33 @@ public class BlockLoopModule extends Module {
             .name("right-click-hold")
             .description("Beim Warten am Look-Punkt Rechtsklick dauerhaft gedrückt halten.")
             .defaultValue(false)
+            .build());
+
+        freezeOnDescent = sgControl.add(new BoolSetting.Builder()
+            .name("freeze-on-descent")
+            .description("Beim Runtergehen/Fallen die Blickrichtung festhalten, statt der Bewegung zu folgen.")
+            .defaultValue(true)
+            .build());
+
+        freezeWhenTargetLower = sgControl.add(new BoolSetting.Builder()
+            .name("freeze-when-target-lower")
+            .description("Blickrichtung schon festhalten, sobald das Ziel tiefer liegt als du. Sonst erst, wenn du wirklich fällst.")
+            .defaultValue(true)
+            .build());
+
+        descentHoldDistance = sgControl.add(new DoubleSetting.Builder()
+            .name("descent-hold-distance")
+            .description("Wie viele Blöcke nach der Landung die Blickrichtung noch festgehalten wird.")
+            .defaultValue(3.0)
+            .min(0.0)
+            .max(10.0)
+            .sliderRange(0.0, 10.0)
+            .build());
+
+        baritoneFreeLook = sgControl.add(new BoolSetting.Builder()
+            .name("baritone-free-look")
+            .description("Baritone dreht nur serverseitig, nicht deine Kamera (verhindert Ruckeln). Wird beim Loop-Start gesetzt.")
+            .defaultValue(true)
             .build());
 
         selectedCategory = sgControl.add(new IntSetting.Builder()
@@ -233,6 +263,15 @@ public class BlockLoopModule extends Module {
     }
 
     @EventHandler
+    private void onTickPre(TickEvent.Pre event) {
+        // Gefrorene Blickrichtung schon vor dem Spieler-Tick setzen, damit die Kamera nicht zwischen zwei Werten ruckelt.
+        LocalPlayer player = mc.player;
+        if (player == null || !running || !walking || !descentFreeze) return;
+        player.setYRot(descentYaw);
+        player.setXRot(descentPitch);
+    }
+
+    @EventHandler
     private void onRender3d(Render3DEvent event) {
         // Beim Start einmal direkt zur Blockmitte des aktuellen Angucken-Ziels drehen.
         if (running && initialCenterPending) {
@@ -277,10 +316,11 @@ public class BlockLoopModule extends Module {
             lookTicks = 0;
             postLookWaitTicks = 0;
             lookFinished = false;
+            descentFreeze = false;
+            postDescentDistance = 0.0;
             info("Punkt %d/%d erreicht -> Angucken wird aktiviert.", currentPoint + 1, categories.get(activeCategory).size());
 
             lastPlayerY = player.getEyeY();
-            walkPitch = player.getXRot();
             haveLastPos = true;
             return;
         }
@@ -291,16 +331,11 @@ public class BlockLoopModule extends Module {
             haveLastPos = false;
         }
 
-        if (haveLastPos) followMovementDirection(player);
+        if (haveLastPos) updateViewWhileWalking(point, player);
         lastX = player.getX();
         lastZ = player.getZ();
+        lastPlayerY = player.getEyeY();
         haveLastPos = true;
-
-        // Pitch merken; bei Abstieg (Treppe/Fall) den alten Pitch beibehalten.
-        double eyeY = player.getEyeY();
-        if (eyeY - lastPlayerY < -0.05) player.setXRot(walkPitch);
-        else walkPitch = player.getXRot();
-        lastPlayerY = eyeY;
     }
 
     private void tickLooking(PathPoint point, LocalPlayer player) {
@@ -353,22 +388,29 @@ public class BlockLoopModule extends Module {
         lookFinished = false;
         announcedPoint = -1;
         haveLastPos = false;
+        descentFreeze = false;
+        postDescentDistance = 0.0;
     }
 
-    /** Dreht beim Laufen in Bewegungsrichtung und friert die Blickrichtung bei Abstiegen ein. */
-    private void followMovementDirection(LocalPlayer player) {
+    /**
+     * Beim Laufen in Bewegungsrichtung drehen. Beim Runtergehen oder Fallen wird die Blickrichtung
+     * dagegen festgehalten (und noch ein Stück nach der Landung), damit die Kamera nicht herumzuckt.
+     */
+    private void updateViewWhileWalking(PathPoint point, LocalPlayer player) {
         double dx = player.getX() - lastX;
         double dz = player.getZ() - lastZ;
         double dy = player.getEyeY() - lastPlayerY;
-        lastPlayerY = player.getEyeY();
 
-        if (dy < -0.05) {
+        boolean dropping = dy < -0.03;
+        boolean targetLower = freezeWhenTargetLower.get() && point.walk.getY() < player.blockPosition().getY();
+
+        if (freezeOnDescent.get() && (dropping || targetLower)) {
             if (!descentFreeze) {
                 descentYaw = player.getYRot();
                 descentPitch = player.getXRot();
                 descentFreeze = true;
-                postDescentDistance = 0.0;
             }
+            postDescentDistance = 0.0;
             player.setYRot(descentYaw);
             player.setXRot(descentPitch);
             return;
@@ -376,7 +418,7 @@ public class BlockLoopModule extends Module {
 
         if (descentFreeze) {
             postDescentDistance += Math.sqrt(dx * dx + dz * dz);
-            if (postDescentDistance < 2.0) {
+            if (postDescentDistance < descentHoldDistance.get()) {
                 player.setYRot(descentYaw);
                 player.setXRot(descentPitch);
                 return;
@@ -566,9 +608,17 @@ public class BlockLoopModule extends Module {
             return;
         }
         resetTraversal();
+        applyBaritoneFreeLook();
         running = true;
         info("Block Loop gestartet: Kategorie %d (%s), %d Punkte.",
             activeCategory + 1, categoryNames[activeCategory].get(), categories.get(activeCategory).size());
+    }
+
+    private void applyBaritoneFreeLook() {
+        try {
+            BaritoneAPI.getSettings().freeLook.value = baritoneFreeLook.get();
+        } catch (Throwable ignored) {
+        }
     }
 
     public void startLoop() {
