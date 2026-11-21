@@ -29,6 +29,7 @@ dependencies {
 
     // Meteor
     implementation(libs.meteor.client)
+    compileOnly("meteordevelopment:baritone:26.2-SNAPSHOT")
 }
 
 java {
