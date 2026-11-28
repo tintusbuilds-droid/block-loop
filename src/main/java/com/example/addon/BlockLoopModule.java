@@ -23,6 +23,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
@@ -69,6 +70,7 @@ public class BlockLoopModule extends Module {
     private final SettingGroup[] sgCategories = new SettingGroup[CATEGORY_COUNT];
 
     private final Setting<Boolean> rightClickHold;
+    private final Setting<Boolean> autoBreak;
     private final Setting<Boolean> freezeOnDescent;
     private final Setting<Boolean> freezeWhenTargetLower;
     private final Setting<Double> descentHoldDistance;
@@ -99,6 +101,12 @@ public class BlockLoopModule extends Module {
             .name("right-click-hold")
             .description("Beim Warten am Look-Punkt Rechtsklick dauerhaft gedrückt halten.")
             .defaultValue(false)
+            .build());
+
+        autoBreak = sgControl.add(new BoolSetting.Builder()
+            .name("auto-break")
+            .description("Baut den angesehenen Block direkt ab, auch bei offenem Menü (ESC, Inventar). Funktioniert nur auf Servern, im Einzelspieler pausiert das Spiel im Menü.")
+            .defaultValue(true)
             .build());
 
         freezeOnDescent = sgControl.add(new BoolSetting.Builder()
@@ -363,8 +371,7 @@ public class BlockLoopModule extends Module {
 
         if (!lookFinished) return;
 
-        tickRightClick(point);
-        mc.options.keyAttack.setDown(true);
+        tickRightClick(point, player);
         postLookWaitTicks++;
 
         if (postLookWaitTicks >= getLookWaitTicks()) {
@@ -665,9 +672,21 @@ public class BlockLoopModule extends Module {
 
     // ---- Klicks ----
 
-    private void tickRightClick(PathPoint point) {
+    private void tickRightClick(PathPoint point, LocalPlayer player) {
         mc.options.keyUse.setDown(rightClickHold.get());
-        if (mc.gameMode != null) mc.gameMode.continueDestroyBlock(point.look, Direction.DOWN);
+
+        if (autoBreak.get()) {
+            // Direkt abbauen, ohne Taste und ohne Fadenkreuz: läuft auch bei offenem Menü.
+            mc.options.keyAttack.setDown(false);
+            if (mc.gameMode != null && mc.level != null
+                && mc.gameMode.continueDestroyBlock(point.look, Direction.DOWN)) {
+                player.swing(InteractionHand.MAIN_HAND);
+            }
+        } else {
+            // Altes Verhalten: Angriffstaste halten (wirkt nur ohne offenes Menü).
+            mc.options.keyAttack.setDown(true);
+            if (mc.gameMode != null) mc.gameMode.continueDestroyBlock(point.look, Direction.DOWN);
+        }
     }
 
     private void releaseRightClick() {
